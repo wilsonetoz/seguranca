@@ -11,40 +11,32 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.padding import PKCS7
 from cryptography.hazmat.primitives.serialization import load_ssh_public_key, load_ssh_private_key
 
-# --- Constantes de Configuração ---
-# Parâmetros Diffie-Hellman: Devem ser os mesmos para cliente e servidor
-# IMPORTANTE: Estes parâmetros DH devem ser os MESMOS para cliente e servidor.
-# Eles foram gerados uma única vez e estão fixos aqui.
 FIXED_DH_PARAMETERS_PEM = b"""-----BEGIN DH PARAMETERS-----
-MIGHAoGBAO94ys5raCTmERuOSAkplAq6e8a72gUdz4mZAMZQQi2P1xCUGcn+TN2w
-bnJlb11+K64eKQhshPG9+JQL+Y2maD6+2GEm9cN/SIkAXM1zto4SuMve78DqyMBN
-Uj25Vh0MEX/Tx61seN3eNMpvP/3WtQxD3A5H/qp3dxAF27qhr64fAgEC
------END DH PARAMETERS-----"""
+MIGHAoGBAIw8OqcQG5UziSsa92WZo6VhLEQBHEdBY+ofV24omMRZlqft9FiGjhm6
+sXNd4OksNbu6kByl3HCH1a0E25k8Ge8VJ+pdTcx3rui4YEvGQYRcVoY8FZoqTCv4
+MQNe8Dh2ZwUx4IUnrBBjmaLP2CwOZGOwuMf4XTYJK/jvv6OwZmw3AgEC
+-----END DH PARAMETERS-----
+"""
 
 DH_PARAMETERS = serialization.load_pem_parameters(FIXED_DH_PARAMETERS_PEM, backend=default_backend())
-# Nome de usuário do GitHub do cliente para autenticação (substitua pelo seu)
-CLIENT_USERNAME = "wilsonetoz" # SEU USUARIO GITHUB
-# Nome do arquivo da chave privada ECDSA do cliente (gerado manualmente)
+
+CLIENT_USERNAME = "wilsonetoz"
 CLIENT_PRIVATE_KEY_FILE = "cliente_key" 
 
-# Configurações para Derivação de Chaves (PBKDF2)
-PBKDF2_ITERATIONS = 100000 # Número de iterações para PBKDF2 (maior = mais seguro, mais lento)
-SALT_SIZE = 16 # Tamanho do salt em bytes
+# Configurações para derivacao de chave (PBKDF2)
+PBKDF2_ITERATIONS = 100000 
+SALT_SIZE = 16
 
-# Comprimentos das chaves e tags (AES-256 e HMAC-SHA256)
-AES_KEY_LENGTH = 32 # 256 bits
-HMAC_KEY_LENGTH = 32 # 256 bits
-HMAC_TAG_LEN = 32 # Tamanho da saída do SHA256
-IV_AES_LEN = 16 # Tamanho do IV para AES (128 bits)
+AES_KEY_LENGTH = 32
+HMAC_KEY_LENGTH = 32
+HMAC_TAG_LEN = 32
+IV_AES_LEN = 16
 
-# --- Funções Auxiliares de Comunicação de Socket ---
 def send_prefixed_data(sock, data):
-    """Envia dados prefixados com seu comprimento de 4 bytes."""
     length = len(data)
     sock.sendall(length.to_bytes(4, 'big') + data)
 
 def recv_prefixed_data(sock):
-    """Recebe dados prefixados com seu comprimento de 4 bytes."""
     raw_length = sock.recv(4)
     if not raw_length:
         return None
@@ -60,9 +52,8 @@ def recv_prefixed_data(sock):
         bytes_received += len(chunk)
     return data
 
-# --- Funções Criptográficas ---
 def get_public_key_from_github(username):
-    public_keys = [] # Mude para uma lista para armazenar todas as chaves
+    public_keys = [] 
     try:
         response = requests.get(f"https://github.com/{username}.keys")
         response.raise_for_status()
@@ -71,26 +62,24 @@ def get_public_key_from_github(username):
         for line in key_lines:
             if line.strip():
                 try:
-                    # Tenta carregar a chave e adicioná-la à lista
                     public_key = load_ssh_public_key(line.encode('utf-8'), backend=default_backend())
-                    print(f"DEBUG: Chave pública para '{username}' analisada com sucesso: {line.strip()[:50]}...") # Adicionado snippet para depuração
+                    print(f"DEBUG: Chave pública para '{username}' analisada com sucesso: {line.strip()[:50]}...")
                     public_keys.append(public_key)
                 except Exception as e:
                     print(f"DEBUG: Falha ao analisar linha como SSH public key: {e}. Tentando próxima linha...")
         
-        if not public_keys: # Se nenhuma chave foi analisada com sucesso
+        if not public_keys:
             print(f"ERRO: Nenhuma chave pública SSH analisável encontrada para '{username}' no GitHub.")
-            return [] # Retorna uma lista vazia
-        return public_keys # Retorna a lista de todas as chaves públicas encontradas
+            return []
+        return public_keys 
     except requests.exceptions.RequestException as e:
         print(f"ERRO: Falha ao buscar chave pública para '{username}' no GitHub: {e}")
-        return [] # Retorna uma lista vazia em caso de erro
+        return []
     except Exception as e:
         print(f"ERRO: Ocorreu um erro inesperado ao buscar/analisar a chave pública para '{username}': {e}")
-        return [] # Retorna uma lista vazia em caso de erro
+        return []
 
 def send_secure_message(sock, message, key_aes, key_hmac):
-    """Criptografa, gera HMAC e envia uma mensagem."""
     message_bytes = message.encode('utf-8')
     iv_aes = os.urandom(IV_AES_LEN)
 
@@ -111,7 +100,6 @@ def send_secure_message(sock, message, key_aes, key_hmac):
     print("DEBUG_SEND: Mensagem segura enviada.")
 
 def receive_secure_message(sock, key_aes, key_hmac):
-    """Recebe, verifica HMAC e descriptografa uma mensagem."""
     try:
         full_packet = recv_prefixed_data(sock)
         if full_packet is None:
@@ -136,7 +124,7 @@ def receive_secure_message(sock, key_aes, key_hmac):
 
             padding_length = decrypted_padded_message[-1]
             if padding_length > len(decrypted_padded_message) or padding_length == 0:
-                print(f"ERRO_RECV: Comprimento de padding inválido detectado: {padding_length}. Possível corrupção ou ataque.")
+                print(f"ERRO_RECV: Comprimento de padding invalido detectado: {padding_length}. Possível corrupção ou ataque.")
                 return "[PADDING_INVALIDO]"
 
             decrypted_message = decrypted_padded_message[:-padding_length].decode('utf-8')
@@ -150,7 +138,6 @@ def receive_secure_message(sock, key_aes, key_hmac):
         return None
 
 def handle_server_communication(sock, key_aes, key_hmac):
-    """Gerencia a comunicação contínua com o servidor em uma thread separada."""
     print("[*] Iniciando thread de recebimento do servidor.")
     while True:
         message = receive_secure_message(sock, key_aes, key_hmac)
@@ -158,7 +145,7 @@ def handle_server_communication(sock, key_aes, key_hmac):
             print("[-] Conexão com o servidor perdida.")
             break
         elif message == "[HMAC_INVALIDO]":
-            print("[RECEBIDO] Mensagem rejeitada: Falha na verificação de integridade/autenticidade.")
+            print("[RECEBIDO] Mensagem rejeitada: Falha na verificação.")
         elif message == "[PACOTE_CURTO]":
             print("[RECEBIDO] Mensagem rejeitada: Pacote recebido muito curto.")
         elif message == "[PADDING_INVALIDO]":
@@ -170,12 +157,11 @@ def run_client():
     HOST = '127.0.0.1'
     PORT = 65432
 
-    # --- CARREGAR A CHAVE PRIVADA ECDSA DO CLIENTE DE UM ARQUIVO ---
     try:
         with open(CLIENT_PRIVATE_KEY_FILE, "rb") as key_file:
             client_private_key_ecdsa = load_ssh_private_key(
                 key_file.read(),
-                password=None, # Mude para b"sua_senha" se a chave tiver uma senha
+                password=None,
                 backend=default_backend()
             )
         print(f"[+] Chave privada ECDSA do cliente carregada de '{CLIENT_PRIVATE_KEY_FILE}'.")
@@ -185,7 +171,6 @@ def run_client():
     except Exception as e:
         print(f"ERRO: Falha ao carregar a chave privada do cliente: {e}. Certifique-se de que é uma chave SSH válida e sem senha (ou com a senha correta).")
         return
-    # --- FIM DO CARREGAMENTO DA CHAVE PRIVADA ---
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
@@ -239,9 +224,8 @@ def run_client():
                     pub_key.verify(server_signature_bytes, data_to_verify)
                     print(f"[+] Assinatura do servidor verificada com sucesso usando uma das chaves do '{server_username}'.")
                     signature_verified = True
-                    break # Se a verificação for bem-sucedida, não precisamos tentar com as outras chaves
+                    break
                 except Exception:
-                    # Se falhar, tentamos a próxima chave
                     pass
             
             if not signature_verified:
@@ -267,17 +251,16 @@ def run_client():
             # --- 3. Derivação de Chaves (PBKDF2) ---
             print("[*] Derivando chaves AES e HMAC (PBKDF2)...")
             
-            # Cliente recebe o salt do servidor, garantindo que todos os bytes sejam lidos
             received_salt = b''
             bytes_received_salt = 0
             while bytes_received_salt < SALT_SIZE:
                 chunk = s.recv(SALT_SIZE - bytes_received_salt)
                 if not chunk:
                     print("ERRO: Conexão encerrada inesperadamente antes de receber o salt completo.")
-                    return # Encerra a função se a conexão for perdida
+                    return 
                 received_salt += chunk
                 bytes_received_salt += len(chunk)
-            salt = received_salt # Usa o salt completo e garantido
+            salt = received_salt
             print("[*] Salt recebido do servidor.")
 
             kdf = PBKDF2HMAC(
@@ -289,7 +272,8 @@ def run_client():
             )
             derived_key = kdf.derive(shared_secret)
             key_aes = derived_key[:AES_KEY_LENGTH]
-            key_hmac = derived_key[AES_KEY_LENGTH:] # Corrected line
+            key_hmac = derived_key[AES_KEY_LENGTH:] 
+            #teste do KeyMAc
             print(f"DEBUG: HMAC Key Hash (Server/Client): {hashes.Hash(hashes.SHA256(), backend=default_backend()).update(key_hmac), hashes.Hash(hashes.SHA256(), backend=default_backend()).finalize().hex()}")
             hasher_hmac = hashes.Hash(hashes.SHA256(), backend=default_backend())
             hasher_hmac.update(key_hmac)
