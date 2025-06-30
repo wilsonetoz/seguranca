@@ -11,40 +11,33 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.padding import PKCS7
 from cryptography.hazmat.primitives.serialization import load_ssh_public_key, load_ssh_private_key
 
-# --- Constantes de Configuração ---
-# Parâmetros Diffie-Hellman: Devem ser os mesmos para cliente e servidor
-# IMPORTANTE: Estes parâmetros DH devem ser os MESMOS para cliente e servidor.
-# Eles foram gerados uma única vez e estão fixos aqui.
+
 FIXED_DH_PARAMETERS_PEM = b"""-----BEGIN DH PARAMETERS-----
-MIGHAoGBAO94ys5raCTmERuOSAkplAq6e8a72gUdz4mZAMZQQi2P1xCUGcn+TN2w
-bnJlb11+K64eKQhshPG9+JQL+Y2maD6+2GEm9cN/SIkAXM1zto4SuMve78DqyMBN
-Uj25Vh0MEX/Tx61seN3eNMpvP/3WtQxD3A5H/qp3dxAF27qhr64fAgEC
------END DH PARAMETERS-----"""
+MIGHAoGBAIw8OqcQG5UziSsa92WZo6VhLEQBHEdBY+ofV24omMRZlqft9FiGjhm6
+sXNd4OksNbu6kByl3HCH1a0E25k8Ge8VJ+pdTcx3rui4YEvGQYRcVoY8FZoqTCv4
+MQNe8Dh2ZwUx4IUnrBBjmaLP2CwOZGOwuMf4XTYJK/jvv6OwZmw3AgEC
+-----END DH PARAMETERS-----
+"""
 
 DH_PARAMETERS = serialization.load_pem_parameters(FIXED_DH_PARAMETERS_PEM, backend=default_backend())
-# Nome de usuário do GitHub do servidor
-SERVER_USERNAME = "wilsonetoz" # SEU USUARIO GITHUB
-# Nome do arquivo da chave privada ECDSA do servidor (gerado manualmente)
+
+SERVER_USERNAME = "wilsonetoz"
 SERVER_PRIVATE_KEY_FILE = "servidor_key" 
 
-# Configurações para Derivação de Chaves (PBKDF2)
-PBKDF2_ITERATIONS = 100000 # Número de iterações para PBKDF2 (maior = mais seguro, mais lento)
-SALT_SIZE = 16 # Tamanho do salt em bytes
+# Configurações para derivação de chaves (PBKDF2)
+PBKDF2_ITERATIONS = 100000
+SALT_SIZE = 16
 
-# Comprimentos das chaves e tags (AES-256 e HMAC-SHA256)
-AES_KEY_LENGTH = 32 # 256 bits
-HMAC_KEY_LENGTH = 32 # 256 bits
-HMAC_TAG_LEN = 32 # Tamanho da saída do SHA256
-IV_AES_LEN = 16 # Tamanho do IV para AES (128 bits)
+AES_KEY_LENGTH = 32
+HMAC_KEY_LENGTH = 32
+HMAC_TAG_LEN = 32
+IV_AES_LEN = 16
 
-# --- Funções Auxiliares de Comunicação de Socket ---
 def send_prefixed_data(sock, data):
-    """Envia dados prefixados com seu comprimento de 4 bytes."""
     length = len(data)
     sock.sendall(length.to_bytes(4, 'big') + data)
 
 def recv_prefixed_data(sock):
-    """Recebe dados prefixados com seu comprimento de 4 bytes."""
     raw_length = sock.recv(4)
     if not raw_length:
         return None
@@ -60,9 +53,8 @@ def recv_prefixed_data(sock):
         bytes_received += len(chunk)
     return data
 
-# --- Funções Criptográficas ---
 def get_public_key_from_github(username):
-    public_keys = [] # Mude para uma lista para armazenar todas as chaves
+    public_keys = []
     try:
         response = requests.get(f"https://github.com/{username}.keys")
         response.raise_for_status()
@@ -71,26 +63,24 @@ def get_public_key_from_github(username):
         for line in key_lines:
             if line.strip():
                 try:
-                    # Tenta carregar a chave e adicioná-la à lista
                     public_key = load_ssh_public_key(line.encode('utf-8'), backend=default_backend())
-                    print(f"DEBUG: Chave pública para '{username}' analisada com sucesso: {line.strip()[:50]}...") # Adicionado snippet para depuração
+                    print(f"DEBUG: Chave pública para '{username}' analisada com sucesso: {line.strip()[:50]}...")
                     public_keys.append(public_key)
                 except Exception as e:
                     print(f"DEBUG: Falha ao analisar linha como SSH public key: {e}. Tentando próxima linha...")
         
-        if not public_keys: # Se nenhuma chave foi analisada com sucesso
+        if not public_keys:
             print(f"ERRO: Nenhuma chave pública SSH analisável encontrada para '{username}' no GitHub.")
-            return [] # Retorna uma lista vazia
-        return public_keys # Retorna a lista de todas as chaves públicas encontradas
+            return []
+        return public_keys
     except requests.exceptions.RequestException as e:
         print(f"ERRO: Falha ao buscar chave pública para '{username}' no GitHub: {e}")
-        return [] # Retorna uma lista vazia em caso de erro
+        return []
     except Exception as e:
         print(f"ERRO: Ocorreu um erro inesperado ao buscar/analisar a chave pública para '{username}': {e}")
-        return [] # Retorna uma lista vazia em caso de erro
+        return []
 
 def send_secure_message(sock, message, key_aes, key_hmac):
-    """Criptografa, gera HMAC e envia uma mensagem."""
     message_bytes = message.encode('utf-8')
     iv_aes = os.urandom(IV_AES_LEN)
 
@@ -111,7 +101,6 @@ def send_secure_message(sock, message, key_aes, key_hmac):
     print("DEBUG_SEND: Mensagem segura enviada.")
 
 def receive_secure_message(sock, key_aes, key_hmac):
-    """Recebe, verifica HMAC e descriptografa uma mensagem."""
     try:
         full_packet = recv_prefixed_data(sock)
         if full_packet is None:
@@ -150,7 +139,6 @@ def receive_secure_message(sock, key_aes, key_hmac):
         return None
 
 def handle_client_communication(conn, key_aes, key_hmac):
-    """Gerencia a comunicação contínua com um cliente em uma thread separada."""
     print("[*] Iniciando thread de recebimento para o cliente.")
     while True:
         message = receive_secure_message(conn, key_aes, key_hmac)
@@ -158,7 +146,7 @@ def handle_client_communication(conn, key_aes, key_hmac):
             print("[-] Conexão com o cliente perdida.")
             break
         elif message == "[HMAC_INVALIDO]":
-            print("[RECEBIDO] Mensagem rejeitada: Falha na verificação de integridade/autenticidade.")
+            print("[RECEBIDO] Mensagem rejeitada: Falha na verificação.")
         elif message == "[PACOTE_CURTO]":
             print("[RECEBIDO] Mensagem rejeitada: Pacote recebido muito curto.")
         elif message == "[PADDING_INVALIDO]":
@@ -170,22 +158,20 @@ def run_server():
     HOST = '127.0.0.1'
     PORT = 65432
 
-    # --- CARREGAR A CHAVE PRIVADA ECDSA DO SERVIDOR DE UM ARQUIVO ---
     try:
         with open(SERVER_PRIVATE_KEY_FILE, "rb") as key_file:
             server_private_key_ecdsa = load_ssh_private_key(
                 key_file.read(),
-                password=None, # Mude para b"sua_senha" se a chave tiver uma senha
+                password=None,
                 backend=default_backend()
             )
         print(f"[+] Chave privada ECDSA do servidor carregada de '{SERVER_PRIVATE_KEY_FILE}'.")
     except FileNotFoundError:
-        print(f"ERRO: Arquivo da chave privada do servidor '{SERVER_PRIVATE_KEY_FILE}' não encontrado. Certifique-se de que ele está na mesma pasta e você o gerou.")
+        print(f"ERRO: Arquivo da chave privada do servidor '{SERVER_PRIVATE_KEY_FILE}' não encontrado.")
         return
     except Exception as e:
-        print(f"ERRO: Falha ao carregar a chave privada do servidor: {e}. Certifique-se de que é uma chave SSH válida e sem senha (ou com a senha correta).")
+        print(f"ERRO: Falha ao carregar a chave privada do servidor: {e}. Certifique-se de que é uma chave SSH válida e senha.")
         return
-    # --- FIM DO CARREGAMENTO DA CHAVE PRIVADA ---
     
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
@@ -197,7 +183,7 @@ def run_server():
         with conn:
             print(f"[+] Cliente conectado de {addr}")
 
-            # --- 2. Handshake Diffie-Hellman e Autenticação (Servidor) ---
+            # 2- Handshake Diffie-Hellman e Autenticação
             print("[*] Iniciando Handshake DH e Autenticação com cliente...")
 
             client_dh_public_bytes = recv_prefixed_data(conn)
@@ -211,13 +197,12 @@ def run_server():
             client_username = client_username_bytes.decode('utf-8')
             print(f"[*] Recebido do cliente: Chave DH Pública, Assinatura, Usuário ({client_username}).")
 
-            # BUSCA AS CHAVES PÚBLICAS ECDSA DO CLIENTE NO GITHUB PARA VERIFICAÇÃO
             client_public_keys_from_github = get_public_key_from_github(client_username)
             if not client_public_keys_from_github:
-                print(f"ERRO: Nenhuma chave pública válida encontrada para '{client_username}' no GitHub. Abortando.")
+                print(f"ERRO: Nenhuma chave publica valida encontrada para '{client_username}' no GitHub. Abortando.")
                 return
             
-            # Verifica a assinatura do cliente, tentando com todas as chaves encontradas
+            # Verifica a assinatura do cliente, tentando com todas as chaves
             signature_verified = False
             data_to_verify = client_dh_public_bytes + client_username_bytes
             for pub_key in client_public_keys_from_github:
@@ -225,13 +210,12 @@ def run_server():
                     pub_key.verify(client_signature_bytes, data_to_verify)
                     print(f"[+] Assinatura do cliente verificada com sucesso usando uma das chaves do '{client_username}'.")
                     signature_verified = True
-                    break # Se a verificação for bem-sucedida, não precisamos tentar com as outras chaves
+                    break
                 except Exception:
-                    # Se falhar, tentamos a próxima chave
                     pass
             
             if not signature_verified:
-                print(f"ERRO: Falha na verificação da assinatura do cliente. Nenhuma das chaves públicas do '{client_username}' no GitHub corresponde à assinatura.")
+                print(f"ERRO: Falha na verificação da assinatura do cliente. Nenhuma das chaves públicas do '{client_username}' no GitHub correspond.")
                 return
 
             # Gera o par de chaves DH do servidor
@@ -242,7 +226,7 @@ def run_server():
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
 
-            # Assina a chave DH pública e o username do servidor com a chave privada CARREGADA
+            # Assina a chave DH pública e o username do servidor com a chave privada
             data_to_sign = server_public_dh_bytes + SERVER_USERNAME.encode('utf-8')
             server_signature = server_private_key_ecdsa.sign(data_to_sign)
 
@@ -258,7 +242,6 @@ def run_server():
                 backend=default_backend()
             ).public_numbers()
             
-            # CORREÇÃO AQUI: Passa o objeto DHParameterNumbers completo
             client_peer_public_key = dh.DHPublicNumbers(client_peer_public_numbers.y, DH_PARAMETERS.parameter_numbers()).public_key(default_backend())
             
             shared_secret = server_private_dh_key.exchange(client_peer_public_key)
@@ -268,7 +251,7 @@ def run_server():
 
             print("[+] Segredo compartilhado (DH) calculado.")
 
-            # --- 3. Derivação de Chaves (PBKDF2) ---
+            # --- 3. Derivação de chaves (PBKDF2) ---
             print("[*] Derivando chaves AES e HMAC (PBKDF2)...")
             salt = os.urandom(SALT_SIZE)
             conn.sendall(salt)
